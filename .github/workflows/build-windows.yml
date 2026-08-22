@@ -18,7 +18,9 @@ env:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # libwdi v1.5.1 MSVC projects target Visual Studio 2022 (v143).
+    # Do not use windows-latest here because that image can move to a newer VS toolset.
+    runs-on: windows-2022
 
     steps:
       - name: Checkout setup repository
@@ -52,12 +54,21 @@ jobs:
           move libusb-win32* libusb0
           move libusbK* libusbk
 
+      - name: Build libwdi mapped helpers
+        shell: cmd
+        working-directory: _deps/libwdi
+        run: |
+          rem The upstream solution maps x64 builds to the required Win32/x64/ARM64 helper projects.
+          rem The DLL project itself is not selected in Release|x64, so build it explicitly next.
+          msbuild libwdi.sln /m /p:Configuration=Release,Platform=x64,BuildMacros=%BUILD_MACROS%
+
       - name: Build libwdi x64 DLL
         shell: cmd
         working-directory: _deps/libwdi
         run: |
-          rem Build through the solution so libwdi's Win32/x64 helper mappings are honored.
-          msbuild libwdi.sln /m /p:Configuration=Release,Platform=x64,BuildMacros=%BUILD_MACROS%
+          rem Helper binaries and embedded.h were prepared by the solution build above.
+          rem Disable project-reference rebuilding so MSBuild does not reinterpret helper platforms.
+          msbuild libwdi\.msvc\libwdi_dll.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:BuildProjectReferences=false /p:BuildMacros=%BUILD_MACROS%
           if not exist x64\Release\dll\libwdi.dll exit /b 1
           if not exist x64\Release\dll\libwdi.lib exit /b 1
 
