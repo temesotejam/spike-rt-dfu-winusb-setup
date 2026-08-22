@@ -73,7 +73,7 @@ spike-rt-dfu-winusb-setup-v0.2.exe --prepare-only
 
 SetupAPIとlibwdiの両方で対象を再確認したうえで、一時フォルダにWinUSB用INFを生成し、INFに `VID_0694&PID_0008` とWinUSB参照が含まれることを確認します。その後、一時ファイルを削除します。
 
-libwdiの生成INFはUTF-16LE+BOMなので、検証側もUTF-16LEを明示的にデコードしてから内容を確認します。
+libwdiの生成INFはUTF-16LE+BOMなので、検証側もUTF-16LEを明示的にデコードしてから内容を確認します。最初の実機prepare-only試験でINF生成そのものは成功したものの、旧検証コードが8-bitテキストとして読んでいたため誤判定したことが分かり、このUTF-16LE対応を追加しました。
 
 このモードではlibwdiの `disable_cat=TRUE` / `disable_signing=TRUE` を使用し、`wdi_install_driver()` は呼びません。したがって、ドライバ割り当て、カタログ署名、自己署名証明書の追加は行いません。現在すでに `Service=WinUSB` のPCでも実行できます。
 
@@ -122,8 +122,11 @@ libwdiはLGPL-3.0-or-laterです。詳細は `THIRD_PARTY_NOTICES.md` とArtifac
 - `LEGO Technic Large Hub in DFU Mode` / `Lego Group` の取得
 - `Service=WinUSB` の判定
 - WinUSB設定済みPCで再実行しても何も変更せず終了すること
+- `--prepare-only` でlibwdiのINF生成処理まで到達し、ドライバインストールを行わず安全側に停止できること
 
 GitHub Actionsでは、Windows x64ビルドと `--self-test --no-pause` を毎回実行します。self-testにはUTF-16LE+BOMのINFデコード検証も含めます。
+
+**再確認待ち:** UTF-16LE修正版の `--prepare-only` が実機生成INFを正しく検証して完了すること。
 
 **未確認:** `Service!=WinUSB` の実PCに対して、実際に `INSTALL` → WinUSB割り当て → `Service=WinUSB` 再確認まで完了する経路。この検証は未設定PCを利用できるときに行います。
 
