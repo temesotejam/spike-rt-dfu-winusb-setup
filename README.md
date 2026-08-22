@@ -24,7 +24,7 @@ WindowsでLEGO SPIKE Prime HubのDFUモードをSPIKE-RT WebUSB書き込みに�
 
 ```text
 HubをDFUモードでUSB接続
-→ spike-rt-dfu-winusb-setup.exe を起動
+→ spike-rt-dfu-winusb-setup-v0.2.exe を起動
 → 0694:0008 を1台だけ検出
 → LEGO Technic Large Hub in DFU Mode であることを確認
 → Service=WinUSB なら「設定済み」と表示して終了
@@ -38,7 +38,43 @@ HubをDFUモードでUSB接続
 
 結果を読めるよう、終了前に `Press Enter to close this window...` と表示してEnter入力を待ちます。コマンドラインや自動実行で待機させたくない場合は `--no-pause` を付けます。
 
-`--detect-only` を付けると、検出と現在のドライバ状態の表示だけを行い、WinUSBが未設定でも変更しません。
+## 非破壊テスト
+
+WinUSB未設定PCが手元になくても、インストール処理以外の経路を検証できるように2つの非破壊モードを用意します。
+
+### `--self-test`
+
+Hubを接続せずに実行できます。
+
+```text
+spike-rt-dfu-winusb-setup-v0.2.exe --self-test
+```
+
+次を確認します。
+
+- 正しい `0694:0008` + Large Hub DFUメタデータを受理できる
+- 誤PIDを拒否できる
+- 誤デバイス名を拒否できる
+- Windowsがメーカー名を返した場合に誤メーカーを拒否できる
+- driverless時の空メーカー値を許容する
+- WinUSB状態判定
+- 同梱libwdiがWinUSB機能を持つこと
+
+このモードはUSB列挙、INF生成、証明書変更、ドライバ変更を行いません。GitHub Actionsでも毎回実行します。
+
+### `--prepare-only`
+
+DFU Hubを1台接続して実行します。
+
+```text
+spike-rt-dfu-winusb-setup-v0.2.exe --prepare-only
+```
+
+SetupAPIとlibwdiの両方で対象を再確認したうえで、一時フォルダにWinUSB用INFを生成し、INFに `VID_0694&PID_0008` とWinUSB参照が含まれることを確認します。その後、一時ファイルを削除します。
+
+このモードではlibwdiの `disable_cat=TRUE` / `disable_signing=TRUE` を使用し、`wdi_install_driver()` は呼びません。したがって、ドライバ割り当て、カタログ署名、自己署名証明書の追加は行いません。現在すでに `Service=WinUSB` のPCでも実行できます。
+
+`--detect-only` は従来どおり、検出と現在のドライバ状態の表示だけを行います。
 
 ## 安全方針
 
@@ -61,19 +97,32 @@ HubをDFUモードでUSB接続
 
 GitHub ActionsはWindows x64用に次を生成します。
 
-- `spike-rt-dfu-winusb-setup.exe`
+- `spike-rt-dfu-winusb-setup-v0.2.exe`
 - `libwdi.dll`
 - `libwdi-COPYING-LGPL.txt`
 - `THIRD_PARTY_NOTICES.md`
 - `SHA256SUMS.txt`
 
-現段階では `spike-rt-dfu-winusb-setup.exe` と `libwdi.dll` を同じフォルダに置いて実行してください。v0.3で配布方法をさらに簡略化する予定です。
+`spike-rt-dfu-winusb-setup-v0.2.exe` と `libwdi.dll` は同じフォルダに置いて実行してください。v0.3で配布方法をさらに簡略化する予定です。
 
 ## libwdi
 
 WinUSBのINF生成、カタログ署名、ドライバ導入には `pbatard/libwdi` v1.5.1を使用します。GitHub Actionsではrelease commit `9b23b82a2dd1cbffc16d46c212f92c6bf8c0c602` に固定してビルドします。
 
 libwdiはLGPL-3.0-or-laterです。詳細は `THIRD_PARTY_NOTICES.md` とArtifactに同梱する `libwdi-COPYING-LGPL.txt` を参照してください。
+
+## 検証状況
+
+実機で以下を確認済みです。
+
+- `0694:0008` の検出
+- `LEGO Technic Large Hub in DFU Mode` / `Lego Group` の取得
+- `Service=WinUSB` の判定
+- WinUSB設定済みPCで再実行しても何も変更せず終了すること
+
+GitHub Actionsでは、Windows x64ビルドと `--self-test --no-pause` を毎回実行します。
+
+**未確認:** `Service!=WinUSB` の実PCに対して、実際に `INSTALL` → WinUSB割り当て → `Service=WinUSB` 再確認まで完了する経路。この検証は未設定PCを利用できるときに行います。
 
 ## 開発段階
 
@@ -83,7 +132,7 @@ libwdiはLGPL-3.0-or-laterです。詳細は `THIRD_PARTY_NOTICES.md` とArtifac
 
 ### v0.2 - WinUSB Setup
 
-v0.1のfail-closed検出を維持したまま、未設定の場合だけlibwdiでWinUSBをセットアップします。現在この段階です。
+v0.1のfail-closed検出を維持したまま、未設定の場合だけlibwdiでWinUSBをセットアップします。設定済み経路は実機確認済みで、新規インストール経路のみ実機未検証です。非破壊のself-test / prepare-onlyを追加して検証範囲を広げています。
 
 ### v0.3 - Distribution
 
