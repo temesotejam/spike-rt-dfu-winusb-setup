@@ -56,7 +56,8 @@ jobs:
         shell: cmd
         working-directory: _deps/libwdi
         run: |
-          msbuild libwdi\.msvc\libwdi_dll.vcxproj /m /p:Configuration=Release,Platform=x64,BuildMacros=%BUILD_MACROS%
+          rem Build through the solution so libwdi's Win32/x64 helper mappings are honored.
+          msbuild libwdi.sln /m /p:Configuration=Release,Platform=x64,BuildMacros=%BUILD_MACROS%
           if not exist x64\Release\dll\libwdi.dll exit /b 1
           if not exist x64\Release\dll\libwdi.lib exit /b 1
 
