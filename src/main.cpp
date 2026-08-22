@@ -3,7 +3,6 @@
 #include <libwdi.h>
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cwctype>
 #include <filesystem>
@@ -36,13 +35,6 @@ struct DeviceInfo {
 std::wstring to_upper(std::wstring value) {
     std::transform(value.begin(), value.end(), value.begin(), [](wchar_t ch) {
         return static_cast<wchar_t>(std::towupper(ch));
-    });
-    return value;
-}
-
-std::string to_upper_ascii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::toupper(ch));
     });
     return value;
 }
@@ -281,6 +273,86 @@ std::string wide_to_utf8(const std::wstring& value) {
     return result;
 }
 
+std::optional<std::wstring> decode_text_bytes(const std::vector<unsigned char>& bytes) {
+    if (bytes.empty()) {
+        return std::wstring{};
+    }
+
+    // libwdi writes prepared INF files as UTF-16LE with a BOM.
+    if (bytes.size() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) {
+        if ((bytes.size() - 2) % 2 != 0) {
+            return std::nullopt;
+        }
+
+        std::wstring result;
+        result.reserve((bytes.size() - 2) / 2);
+        for (size_t i = 2; i + 1 < bytes.size(); i += 2) {
+            const unsigned int code_unit =
+                static_cast<unsigned int>(bytes[i]) |
+                (static_cast<unsigned int>(bytes[i + 1]) << 8);
+            result.push_back(static_cast<wchar_t>(code_unit));
+        }
+        return result;
+    }
+
+    size_t offset = 0;
+    if (bytes.size() >= 3 &&
+        bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
+        offset = 3;
+    }
+
+    const int byte_count = static_cast<int>(bytes.size() - offset);
+    if (byte_count == 0) {
+        return std::wstring{};
+    }
+
+    const char* data = reinterpret_cast<const char*>(bytes.data() + offset);
+    const int required = MultiByteToWideChar(
+        CP_UTF8,
+        MB_ERR_INVALID_CHARS,
+        data,
+        byte_count,
+        nullptr,
+        0);
+    if (required <= 0) {
+        return std::nullopt;
+    }
+
+    std::wstring result(static_cast<size_t>(required), L'\0');
+    if (MultiByteToWideChar(
+            CP_UTF8,
+            MB_ERR_INVALID_CHARS,
+            data,
+            byte_count,
+            result.data(),
+            required) != required) {
+        return std::nullopt;
+    }
+
+    return result;
+}
+
+bool inf_has_expected_markers(const std::wstring& contents) {
+    const std::wstring upper = to_upper(contents);
+    return upper.find(kTargetVidPid) != std::wstring::npos &&
+           upper.find(L"WINUSB") != std::wstring::npos;
+}
+
+std::vector<unsigned char> make_utf16le_test_bytes(const std::wstring& text) {
+    std::vector<unsigned char> bytes;
+    bytes.reserve(2 + text.size() * 2);
+    bytes.push_back(0xFF);
+    bytes.push_back(0xFE);
+
+    for (wchar_t ch : text) {
+        const unsigned int code_unit = static_cast<unsigned int>(ch);
+        bytes.push_back(static_cast<unsigned char>(code_unit & 0xFF));
+        bytes.push_back(static_cast<unsigned char>((code_unit >> 8) & 0xFF));
+    }
+
+    return bytes;
+}
+
 int run_self_test() {
     int failures = 0;
 
@@ -320,6 +392,17 @@ int run_self_test() {
 
     expect(L"libwdi binary exposes WinUSB support", wdi_is_driver_supported(WDI_WINUSB, nullptr) == TRUE);
     expect(L"UTF-8 path conversion works", !wide_to_utf8(L"C:\\Temp\\spike-rt-test").empty());
+
+    const std::wstring synthetic_inf =
+        L"DeviceID = \"VID_0694&PID_0008\"\r\n"
+        L"Include = winusb.inf\r\n"
+        L"AddService = WinUSB,0x00000002,WinUSB_ServiceInstall\r\n";
+    const auto utf16_bytes = make_utf16le_test_bytes(synthetic_inf);
+    const auto decoded_inf = decode_text_bytes(utf16_bytes);
+    expect(L"UTF-16LE BOM INF decoding works", decoded_inf.has_value());
+    expect(
+        L"decoded UTF-16LE INF exposes target VID/PID and WinUSB markers",
+        decoded_inf.has_value() && inf_has_expected_markers(*decoded_inf));
 
     if (failures == 0) {
         std::wcout << L"\nSelf-test passed. No USB enumeration, driver preparation, certificate change, or driver installation was performed.\n";
@@ -380,13 +463,18 @@ bool validate_prepared_inf(const std::filesystem::path& inf_path) {
         return false;
     }
 
-    const std::string contents(
+    const std::vector<unsigned char> bytes(
         (std::istreambuf_iterator<char>(input)),
         std::istreambuf_iterator<char>());
-    const std::string upper = to_upper_ascii(contents);
+    const auto contents = decode_text_bytes(bytes);
+    if (!contents.has_value()) {
+        std::wcerr << L"Prepared INF uses an unsupported or malformed text encoding.\n";
+        return false;
+    }
 
-    const bool has_target_id = upper.find("VID_0694&PID_0008") != std::string::npos;
-    const bool has_winusb = upper.find("WINUSB") != std::string::npos;
+    const std::wstring upper = to_upper(*contents);
+    const bool has_target_id = upper.find(kTargetVidPid) != std::wstring::npos;
+    const bool has_winusb = upper.find(L"WINUSB") != std::wstring::npos;
 
     if (!has_target_id) {
         std::wcerr << L"Prepared INF does not contain the expected VID/PID.\n";
