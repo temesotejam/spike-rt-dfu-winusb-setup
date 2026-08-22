@@ -1,6 +1,8 @@
 name: Publish Windows prerelease
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
@@ -25,7 +27,42 @@ env:
   BUILD_MACROS: '"WDK_DIR=\"../wdk/Windows Kits/8.0\";LIBUSB0_DIR=\"../libusb0\";LIBUSBK_DIR=\"../libusbk/bin\""'
 
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      exists: ${{ steps.release.outputs.exists }}
+      tag: ${{ steps.release.outputs.tag }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+
+    steps:
+      - name: Resolve release request
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            tag="${{ inputs.tag }}"
+            prerelease="${{ inputs.prerelease }}"
+          else
+            tag="v0.3.0"
+            prerelease="true"
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release $tag already exists; publish build will be skipped."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Release $tag does not exist yet; publish build will run."
+          fi
+
   publish:
+    needs: check
+    if: needs.check.outputs.exists != 'true'
     runs-on: windows-2022
 
     steps:
@@ -130,6 +167,7 @@ jobs:
           - 設定済みPCで何も変更しないこと
           - 非破壊 `prepare-only` でのWinUSB INF生成と内容確認
           - 単一EXEからの内部GUI / worker / libwdi展開
+          - Windows用アプリアイコンを含む単一EXEビルド
 
           ## 未確認
           - WinUSB未設定PCでの新規ドライバ割り当て経路
@@ -146,12 +184,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "${{ inputs.tag }}"
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            throw "Release $tag already exists. Choose a new tag or delete the existing release first."
-          }
-
+          $tag = "${{ needs.check.outputs.tag }}"
           $args = @(
             "release", "create", $tag,
             "dist/SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe",
@@ -159,10 +192,10 @@ jobs:
             "dist/THIRD_PARTY_NOTICES.md",
             "dist/libwdi-COPYING-LGPL.txt",
             "--target", "${{ github.sha }}",
-            "--title", "SPIKE-RT DFU WinUSB Setup v0.3.0",
+            "--title", "SPIKE-RT DFU WinUSB Setup $tag",
             "--notes-file", "dist/RELEASE_NOTES.md"
           )
-          if ("${{ inputs.prerelease }}" -eq "true") {
+          if ("${{ needs.check.outputs.prerelease }}" -eq "true") {
             $args += "--prerelease"
           }
           & gh @args
