@@ -96,10 +96,12 @@ jobs:
       - name: Package notices and checksums
         shell: pwsh
         run: |
+          Copy-Item "build/Release/spike-rt-dfu-winusb-setup.exe" "build/Release/spike-rt-dfu-winusb-setup-v0.2.exe"
+          Remove-Item "build/Release/spike-rt-dfu-winusb-setup.exe"
           Copy-Item "_deps/libwdi/COPYING-LGPL" "build/Release/libwdi-COPYING-LGPL.txt"
           Copy-Item "THIRD_PARTY_NOTICES.md" "build/Release/THIRD_PARTY_NOTICES.md"
           $files = @(
-            "build/Release/spike-rt-dfu-winusb-setup.exe",
+            "build/Release/spike-rt-dfu-winusb-setup-v0.2.exe",
             "build/Release/libwdi.dll"
           )
           $lines = foreach ($file in $files) {
@@ -112,9 +114,9 @@ jobs:
       - name: Upload Windows x64 package
         uses: actions/upload-artifact@v4
         with:
-          name: spike-rt-dfu-winusb-setup-windows-x64
+          name: spike-rt-dfu-winusb-setup-v0.2-windows-x64
           path: |
-            build/Release/spike-rt-dfu-winusb-setup.exe
+            build/Release/spike-rt-dfu-winusb-setup-v0.2.exe
             build/Release/libwdi.dll
             build/Release/libwdi-COPYING-LGPL.txt
             build/Release/THIRD_PARTY_NOTICES.md
