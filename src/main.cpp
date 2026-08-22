@@ -28,6 +28,24 @@ std::wstring to_upper(std::wstring value) {
     return value;
 }
 
+bool has_argument(int argc, wchar_t* argv[], const std::wstring& expected) {
+    for (int i = 1; i < argc; ++i) {
+        if (argv[i] == expected) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int finish(int exit_code, bool pause_before_exit) {
+    if (pause_before_exit) {
+        std::wcout << L"\nPress Enter to close this window..." << std::flush;
+        std::wstring ignored;
+        std::getline(std::wcin, ignored);
+    }
+    return exit_code;
+}
+
 std::optional<std::wstring> get_registry_string(
     HDEVINFO device_info_set,
     SP_DEVINFO_DATA& device_info_data,
@@ -167,7 +185,9 @@ void print_device(const DeviceInfo& device) {
 
 }  // namespace
 
-int wmain() {
+int wmain(int argc, wchar_t* argv[]) {
+    const bool pause_before_exit = !has_argument(argc, argv, L"--no-pause");
+
     std::wcout << L"SPIKE-RT DFU WinUSB Setup - detector v0.1\n";
     std::wcout << L"Target: USB VID 0694 / PID 0008\n";
     std::wcout << L"This version is read-only and does not change any driver.\n\n";
@@ -177,17 +197,17 @@ int wmain() {
     if (targets.empty()) {
         std::wcout << L"No target DFU Hub was found.\n";
         std::wcout << L"Put the SPIKE Prime Hub into DFU mode, connect it by USB, and run this tool again.\n";
-        return 2;
+        return finish(2, pause_before_exit);
     }
 
     if (targets.size() > 1) {
         std::wcerr << L"Safety stop: " << targets.size()
                    << L" devices matching VID 0694 / PID 0008 are connected.\n";
         std::wcerr << L"Disconnect extra devices and leave exactly one target Hub connected.\n";
-        return 3;
+        return finish(3, pause_before_exit);
     }
 
     print_device(targets.front());
     std::wcout << L"\nDetector completed. No system changes were made.\n";
-    return 0;
+    return finish(0, pause_before_exit);
 }
