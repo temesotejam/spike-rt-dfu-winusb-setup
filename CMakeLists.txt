@@ -16,14 +16,36 @@ set(LIBWDI_INCLUDE_DIR "${LIBWDI_ROOT}/libwdi")
 set(LIBWDI_DLL_DIR "${LIBWDI_ROOT}/x64/Release/dll")
 set(LIBWDI_IMPORT_LIB "${LIBWDI_DLL_DIR}/libwdi.lib")
 set(LIBWDI_DLL "${LIBWDI_DLL_DIR}/libwdi.dll")
-set(APP_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/spike_rt_winusb_setup.ico")
 
 if(NOT EXISTS "${LIBWDI_IMPORT_LIB}" OR NOT EXISTS "${LIBWDI_DLL}")
     message(FATAL_ERROR "Built libwdi x64 Release DLL/import library not found under ${LIBWDI_DLL_DIR}")
 endif()
 
-if(NOT EXISTS "${APP_ICON_PATH}")
-    message(FATAL_ERROR "Application icon not found: ${APP_ICON_PATH}")
+# Generate the Windows application icon from source at configure time. Every
+# ICO image entry is PNG-compressed so the Windows SDK resource compiler does
+# not reject legacy DIB frames.
+find_program(POWERSHELL_EXECUTABLE NAMES pwsh powershell REQUIRED)
+set(APP_ICON_GENERATOR "${CMAKE_CURRENT_SOURCE_DIR}/tools/generate-icon.ps1")
+set(APP_ICON_DIR "${CMAKE_BINARY_DIR}/generated")
+set(APP_ICON_PATH "${APP_ICON_DIR}/spike_rt_winusb_setup.ico")
+file(MAKE_DIRECTORY "${APP_ICON_DIR}")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${APP_ICON_GENERATOR}")
+
+execute_process(
+    COMMAND "${POWERSHELL_EXECUTABLE}"
+        -NoProfile
+        -ExecutionPolicy Bypass
+        -File "${APP_ICON_GENERATOR}"
+        -OutputPath "${APP_ICON_PATH}"
+    RESULT_VARIABLE APP_ICON_RESULT
+    OUTPUT_VARIABLE APP_ICON_STDOUT
+    ERROR_VARIABLE APP_ICON_STDERR
+)
+if(NOT APP_ICON_RESULT EQUAL 0 OR NOT EXISTS "${APP_ICON_PATH}")
+    message(FATAL_ERROR
+        "Could not generate Windows application icon.\n"
+        "stdout: ${APP_ICON_STDOUT}\n"
+        "stderr: ${APP_ICON_STDERR}")
 endif()
 
 set(EMBEDDED_RUNTIME_DIR "${CMAKE_BINARY_DIR}/embedded-runtime")
