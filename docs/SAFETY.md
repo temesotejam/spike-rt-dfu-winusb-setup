@@ -34,9 +34,43 @@ The program must make no driver changes when:
 
 ## Idempotent behavior
 
-If the verified target already reports `Service=WinUSB`, the program exits successfully without preparing or installing a driver package.
+If the verified target already reports `Service=WinUSB`, normal execution exits successfully without preparing or installing a driver package.
 
-This means repeated execution on an already-configured PC must not replace or reinstall the driver unnecessarily.
+This means repeated normal execution on an already-configured PC must not replace or reinstall the driver unnecessarily.
+
+`--prepare-only` is an explicit diagnostic exception: it may generate temporary files for validation even when WinUSB is already assigned, but it must not change the device service or Windows certificate stores.
+
+## Non-destructive validation modes
+
+### `--self-test`
+
+This mode does not enumerate USB devices. It runs synthetic policy checks for:
+
+- expected metadata acceptance
+- wrong PID rejection
+- wrong device-name rejection
+- wrong manufacturer rejection when the manufacturer is present
+- driverless metadata handling
+- WinUSB state recognition
+- presence of WinUSB support in the linked libwdi binary
+
+It must not call `wdi_prepare_driver()` or `wdi_install_driver()`.
+
+### `--prepare-only`
+
+This mode requires the same SetupAPI metadata checks as normal execution and then independently requires libwdi to find exactly one `0694:0008` device.
+
+It calls `wdi_prepare_driver()` only with:
+
+- `driver_type = WDI_WINUSB`
+- `disable_cat = TRUE`
+- `disable_signing = TRUE`
+- `use_wcid_driver = FALSE`
+- `external_inf = FALSE`
+
+The generated temporary INF must contain `VID_0694&PID_0008` and a WinUSB reference. The temporary directory is deleted after validation.
+
+This mode must never call `wdi_install_driver()`. With signing disabled, it must not request self-signed certificate installation. It therefore validates the libwdi extraction/tokenization path without intentionally changing device binding, the driver store, or certificate trust.
 
 ## Installation path
 
@@ -71,4 +105,6 @@ libwdi is built as a separate DLL. The application performs its own device valid
 
 - normal execution: detect, validate, and if needed offer the guarded WinUSB installation
 - `--detect-only`: perform validation/reporting only; never install
+- `--prepare-only`: non-destructively exercise libwdi target enumeration and unsigned INF generation; never install
+- `--self-test`: run synthetic safety-policy checks without USB enumeration
 - `--no-pause`: do not wait for Enter before process exit; this changes only console behavior, not installation confirmation
