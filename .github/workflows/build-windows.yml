@@ -93,6 +93,10 @@ jobs:
       - name: Build setup tool
         run: cmake --build build --config Release
 
+      - name: Run non-destructive self-test
+        shell: cmd
+        run: build\Release\spike-rt-dfu-winusb-setup.exe --self-test --no-pause
+
       - name: Package notices and checksums
         shell: pwsh
         run: |

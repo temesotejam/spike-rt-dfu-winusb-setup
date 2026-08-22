@@ -6,7 +6,9 @@
 #include <chrono>
 #include <cwctype>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <thread>
@@ -271,6 +273,146 @@ std::string wide_to_utf8(const std::wstring& value) {
     return result;
 }
 
+std::optional<std::wstring> decode_text_bytes(const std::vector<unsigned char>& bytes) {
+    if (bytes.empty()) {
+        return std::wstring{};
+    }
+
+    // libwdi writes prepared INF files as UTF-16LE with a BOM.
+    if (bytes.size() >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE) {
+        if ((bytes.size() - 2) % 2 != 0) {
+            return std::nullopt;
+        }
+
+        std::wstring result;
+        result.reserve((bytes.size() - 2) / 2);
+        for (size_t i = 2; i + 1 < bytes.size(); i += 2) {
+            const unsigned int code_unit =
+                static_cast<unsigned int>(bytes[i]) |
+                (static_cast<unsigned int>(bytes[i + 1]) << 8);
+            result.push_back(static_cast<wchar_t>(code_unit));
+        }
+        return result;
+    }
+
+    size_t offset = 0;
+    if (bytes.size() >= 3 &&
+        bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) {
+        offset = 3;
+    }
+
+    const int byte_count = static_cast<int>(bytes.size() - offset);
+    if (byte_count == 0) {
+        return std::wstring{};
+    }
+
+    const char* data = reinterpret_cast<const char*>(bytes.data() + offset);
+    const int required = MultiByteToWideChar(
+        CP_UTF8,
+        MB_ERR_INVALID_CHARS,
+        data,
+        byte_count,
+        nullptr,
+        0);
+    if (required <= 0) {
+        return std::nullopt;
+    }
+
+    std::wstring result(static_cast<size_t>(required), L'\0');
+    if (MultiByteToWideChar(
+            CP_UTF8,
+            MB_ERR_INVALID_CHARS,
+            data,
+            byte_count,
+            result.data(),
+            required) != required) {
+        return std::nullopt;
+    }
+
+    return result;
+}
+
+bool inf_has_expected_markers(const std::wstring& contents) {
+    const std::wstring upper = to_upper(contents);
+    return upper.find(kTargetVidPid) != std::wstring::npos &&
+           upper.find(L"WINUSB") != std::wstring::npos;
+}
+
+std::vector<unsigned char> make_utf16le_test_bytes(const std::wstring& text) {
+    std::vector<unsigned char> bytes;
+    bytes.reserve(2 + text.size() * 2);
+    bytes.push_back(0xFF);
+    bytes.push_back(0xFE);
+
+    for (wchar_t ch : text) {
+        const unsigned int code_unit = static_cast<unsigned int>(ch);
+        bytes.push_back(static_cast<unsigned char>(code_unit & 0xFF));
+        bytes.push_back(static_cast<unsigned char>((code_unit >> 8) & 0xFF));
+    }
+
+    return bytes;
+}
+
+int run_self_test() {
+    int failures = 0;
+
+    const auto expect = [&failures](const wchar_t* name, bool condition) {
+        std::wcout << (condition ? L"[PASS] " : L"[FAIL] ") << name << L"\n";
+        if (!condition) {
+            ++failures;
+        }
+    };
+
+    DeviceInfo valid;
+    valid.instance_id = L"USB\\VID_0694&PID_0008\\SELFTEST";
+    valid.description = kExpectedDescription;
+    valid.manufacturer = L"Lego Group";
+    valid.service = L"WinUSB";
+
+    expect(L"expected DFU metadata is accepted", metadata_matches_expected_target(valid));
+    expect(L"WinUSB service is recognized", is_winusb(valid));
+
+    DeviceInfo wrong_pid = valid;
+    wrong_pid.instance_id = L"USB\\VID_0694&PID_0009\\SELFTEST";
+    expect(L"wrong PID is rejected", !metadata_matches_expected_target(wrong_pid));
+
+    DeviceInfo wrong_name = valid;
+    wrong_name.description = L"Some Other USB Device";
+    expect(L"wrong device name is rejected", !metadata_matches_expected_target(wrong_name));
+
+    DeviceInfo wrong_manufacturer = valid;
+    wrong_manufacturer.manufacturer = L"Unknown Vendor";
+    expect(L"wrong manufacturer is rejected when present", !metadata_matches_expected_target(wrong_manufacturer));
+
+    DeviceInfo driverless = valid;
+    driverless.manufacturer.clear();
+    driverless.service.clear();
+    expect(L"missing manufacturer is allowed for a driverless expected Hub", metadata_matches_expected_target(driverless));
+    expect(L"driverless device is not mistaken for WinUSB", !is_winusb(driverless));
+
+    expect(L"libwdi binary exposes WinUSB support", wdi_is_driver_supported(WDI_WINUSB, nullptr) == TRUE);
+    expect(L"UTF-8 path conversion works", !wide_to_utf8(L"C:\\Temp\\spike-rt-test").empty());
+
+    const std::wstring synthetic_inf =
+        L"DeviceID = \"VID_0694&PID_0008\"\r\n"
+        L"Include = winusb.inf\r\n"
+        L"AddService = WinUSB,0x00000002,WinUSB_ServiceInstall\r\n";
+    const auto utf16_bytes = make_utf16le_test_bytes(synthetic_inf);
+    const auto decoded_inf = decode_text_bytes(utf16_bytes);
+    expect(L"UTF-16LE BOM INF decoding works", decoded_inf.has_value());
+    expect(
+        L"decoded UTF-16LE INF exposes target VID/PID and WinUSB markers",
+        decoded_inf.has_value() && inf_has_expected_markers(*decoded_inf));
+
+    if (failures == 0) {
+        std::wcout << L"\nSelf-test passed. No USB enumeration, driver preparation, certificate change, or driver installation was performed.\n";
+        return 0;
+    }
+
+    std::wcerr << L"\nSelf-test failed: " << failures << L" check(s) failed.\n";
+    return 20;
+}
+
 struct WdiDeviceList {
     wdi_device_info* head = nullptr;
 
@@ -309,9 +451,109 @@ std::optional<wdi_device_info*> find_exact_wdi_target(WdiDeviceList& holder) {
     return matches.front();
 }
 
-std::filesystem::path make_driver_temp_directory() {
+std::filesystem::path make_driver_temp_directory(const wchar_t* suffix = L"") {
     return std::filesystem::temp_directory_path() /
-        (L"spike-rt-dfu-winusb-setup-" + std::to_wstring(GetCurrentProcessId()));
+        (L"spike-rt-dfu-winusb-setup-" + std::to_wstring(GetCurrentProcessId()) + suffix);
+}
+
+bool validate_prepared_inf(const std::filesystem::path& inf_path) {
+    std::ifstream input(inf_path, std::ios::binary);
+    if (!input) {
+        std::wcerr << L"Prepared INF was not found: " << inf_path.wstring() << L"\n";
+        return false;
+    }
+
+    const std::vector<unsigned char> bytes(
+        (std::istreambuf_iterator<char>(input)),
+        std::istreambuf_iterator<char>());
+    const auto contents = decode_text_bytes(bytes);
+    if (!contents.has_value()) {
+        std::wcerr << L"Prepared INF uses an unsupported or malformed text encoding.\n";
+        return false;
+    }
+
+    const std::wstring upper = to_upper(*contents);
+    const bool has_target_id = upper.find(kTargetVidPid) != std::wstring::npos;
+    const bool has_winusb = upper.find(L"WINUSB") != std::wstring::npos;
+
+    if (!has_target_id) {
+        std::wcerr << L"Prepared INF does not contain the expected VID/PID.\n";
+    }
+    if (!has_winusb) {
+        std::wcerr << L"Prepared INF does not contain a WinUSB reference.\n";
+    }
+
+    return has_target_id && has_winusb;
+}
+
+int prepare_winusb_package_only() {
+    if (!wdi_is_driver_supported(WDI_WINUSB, nullptr)) {
+        std::wcerr << L"This libwdi build does not contain WinUSB support.\n";
+        return 7;
+    }
+
+    WdiDeviceList wdi_devices;
+    const auto target = find_exact_wdi_target(wdi_devices);
+    if (!target.has_value()) {
+        return 8;
+    }
+
+    std::error_code fs_error;
+    const std::filesystem::path driver_dir = make_driver_temp_directory(L"-prepare-only");
+    std::filesystem::remove_all(driver_dir, fs_error);
+    fs_error.clear();
+    std::filesystem::create_directories(driver_dir, fs_error);
+    if (fs_error) {
+        std::wcerr << L"Could not create temporary driver directory: "
+                   << driver_dir.wstring() << L"\n";
+        return 9;
+    }
+
+    const std::string driver_dir_utf8 = wide_to_utf8(driver_dir.wstring());
+    if (driver_dir_utf8.empty()) {
+        std::wcerr << L"Could not convert the temporary driver path to UTF-8.\n";
+        std::filesystem::remove_all(driver_dir, fs_error);
+        return 9;
+    }
+
+    wdi_set_log_level(WDI_LOG_LEVEL_WARNING);
+
+    wdi_options_prepare_driver prepare{};
+    prepare.driver_type = WDI_WINUSB;
+    prepare.vendor_name = const_cast<char*>("Lego Group");
+    // prepare-only must not install a self-signed certificate or produce a
+    // signed catalog. It only exercises extraction and INF tokenization.
+    prepare.disable_cat = TRUE;
+    prepare.disable_signing = TRUE;
+    prepare.use_wcid_driver = FALSE;
+    prepare.external_inf = FALSE;
+
+    std::wcout << L"\nPrepare-only: generating an unsigned temporary WinUSB INF...\n";
+    const int result = wdi_prepare_driver(
+        *target,
+        driver_dir_utf8.c_str(),
+        kInfName,
+        &prepare);
+
+    if (result != WDI_SUCCESS) {
+        std::cerr << "libwdi prepare-only failed: " << wdi_strerror(result) << "\n";
+        std::filesystem::remove_all(driver_dir, fs_error);
+        return 10;
+    }
+
+    const std::filesystem::path inf_path = driver_dir / kInfName;
+    const bool valid_inf = validate_prepared_inf(inf_path);
+    std::filesystem::remove_all(driver_dir, fs_error);
+
+    if (!valid_inf) {
+        std::wcerr << L"Prepare-only validation failed. No driver installation was attempted.\n";
+        return 13;
+    }
+
+    std::wcout << L"Prepare-only passed: the generated INF targets 0694:0008 and references WinUSB.\n";
+    std::wcout << L"No catalog signing, certificate installation, or driver installation was requested.\n";
+    std::wcout << L"Temporary files were removed.\n";
+    return 0;
 }
 
 bool wait_for_winusb_verification(DeviceInfo& verified_device) {
@@ -418,10 +660,17 @@ int install_winusb() {
 int wmain(int argc, wchar_t* argv[]) {
     const bool pause_before_exit = !has_argument(argc, argv, L"--no-pause");
     const bool detect_only = has_argument(argc, argv, L"--detect-only");
+    const bool prepare_only = has_argument(argc, argv, L"--prepare-only");
+    const bool self_test = has_argument(argc, argv, L"--self-test");
 
     std::wcout << L"SPIKE-RT DFU WinUSB Setup v0.2\n";
     std::wcout << L"Target: LEGO Technic Large Hub in DFU Mode / USB 0694:0008\n";
     std::wcout << L"This tool never selects an arbitrary USB device.\n\n";
+
+    if (self_test) {
+        std::wcout << L"Running non-destructive self-test.\n";
+        return finish(run_self_test(), pause_before_exit);
+    }
 
     const auto targets = find_target_devices();
 
@@ -445,6 +694,11 @@ int wmain(int argc, wchar_t* argv[]) {
         std::wcerr << L"\nSafety stop: device metadata does not match the expected SPIKE Prime DFU Hub.\n";
         std::wcerr << L"No driver changes were made.\n";
         return finish(4, pause_before_exit);
+    }
+
+    if (prepare_only) {
+        std::wcout << L"\nPrepare-only mode selected. Existing driver service will not be changed.\n";
+        return finish(prepare_winusb_package_only(), pause_before_exit);
     }
 
     if (is_winusb(target)) {
