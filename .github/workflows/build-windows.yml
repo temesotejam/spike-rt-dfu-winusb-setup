@@ -93,36 +93,43 @@ jobs:
       - name: Build setup tool
         run: cmake --build build --config Release
 
-      - name: Run non-destructive self-test
+      - name: Run non-destructive worker self-test
         shell: cmd
         run: build\Release\spike-rt-dfu-winusb-setup.exe --self-test --no-pause
 
-      - name: Package notices and checksums
+      - name: Verify GUI binary
+        shell: cmd
+        run: |
+          if not exist build\Release\SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe exit /b 1
+
+      - name: Package GUI and private runtime worker
         shell: pwsh
         run: |
-          Copy-Item "build/Release/spike-rt-dfu-winusb-setup.exe" "build/Release/spike-rt-dfu-winusb-setup-v0.2.exe"
-          Remove-Item "build/Release/spike-rt-dfu-winusb-setup.exe"
-          Copy-Item "_deps/libwdi/COPYING-LGPL" "build/Release/libwdi-COPYING-LGPL.txt"
-          Copy-Item "THIRD_PARTY_NOTICES.md" "build/Release/THIRD_PARTY_NOTICES.md"
+          Remove-Item "dist" -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path "dist/runtime" -Force | Out-Null
+
+          Copy-Item "build/Release/SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe" "dist/SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe"
+          Copy-Item "build/Release/spike-rt-dfu-winusb-setup.exe" "dist/runtime/spike-rt-dfu-winusb-worker.exe"
+          Copy-Item "build/Release/libwdi.dll" "dist/runtime/libwdi.dll"
+          Copy-Item "_deps/libwdi/COPYING-LGPL" "dist/libwdi-COPYING-LGPL.txt"
+          Copy-Item "THIRD_PARTY_NOTICES.md" "dist/THIRD_PARTY_NOTICES.md"
+          Copy-Item "README.md" "dist/README.md"
+
           $files = @(
-            "build/Release/spike-rt-dfu-winusb-setup-v0.2.exe",
-            "build/Release/libwdi.dll"
+            "dist/SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe",
+            "dist/runtime/spike-rt-dfu-winusb-worker.exe",
+            "dist/runtime/libwdi.dll"
           )
           $lines = foreach ($file in $files) {
             $hash = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
-            "$hash  $([System.IO.Path]::GetFileName($file))"
+            "$hash  $($file.Replace('dist/', '').Replace('dist\\', ''))"
           }
-          $lines | Set-Content -Encoding ascii "build/Release/SHA256SUMS.txt"
-          Get-Content "build/Release/SHA256SUMS.txt"
+          $lines | Set-Content -Encoding ascii "dist/SHA256SUMS.txt"
+          Get-Content "dist/SHA256SUMS.txt"
 
-      - name: Upload Windows x64 package
+      - name: Upload Windows x64 GUI package
         uses: actions/upload-artifact@v4
         with:
-          name: spike-rt-dfu-winusb-setup-v0.2-windows-x64
-          path: |
-            build/Release/spike-rt-dfu-winusb-setup-v0.2.exe
-            build/Release/libwdi.dll
-            build/Release/libwdi-COPYING-LGPL.txt
-            build/Release/THIRD_PARTY_NOTICES.md
-            build/Release/SHA256SUMS.txt
+          name: spike-rt-dfu-winusb-setup-v0.3-gui-windows-x64
+          path: dist/**
           if-no-files-found: error
