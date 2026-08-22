@@ -1,4 +1,4 @@
-name: Build Windows detector
+name: Build Windows WinUSB setup
 
 on:
   push:
@@ -9,23 +9,116 @@ on:
 permissions:
   contents: read
 
+env:
+  LIBWDI_COMMIT: 9b23b82a2dd1cbffc16d46c212f92c6bf8c0c602
+  WDK_URL: https://go.microsoft.com/fwlink/p/?LinkID=253170
+  LIBUSB0_URL: https://github.com/mcuee/libusb-win32/releases/download/release_1.4.0.0/libusb-win32-bin-1.4.0.0.zip
+  LIBUSBK_URL: https://github.com/mcuee/libusbk/releases/download/V3.1.0.0/libusbK-3.1.0.0-bin.7z
+  BUILD_MACROS: '"WDK_DIR=\"../wdk/Windows Kits/8.0\";LIBUSB0_DIR=\"../libusb0\";LIBUSBK_DIR=\"../libusbk/bin\""'
+
 jobs:
   build:
-    runs-on: windows-latest
+    # libwdi v1.5.1 MSVC projects target Visual Studio 2022 (v143).
+    # Do not use windows-latest here because that image can move to a newer VS toolset.
+    runs-on: windows-2022
 
     steps:
-      - name: Checkout
+      - name: Checkout setup repository
         uses: actions/checkout@v4
 
-      - name: Configure
-        run: cmake -S . -B build -A x64
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
 
-      - name: Build
+      - name: Checkout pinned libwdi
+        shell: cmd
+        run: |
+          mkdir _deps
+          git clone https://github.com/pbatard/libwdi.git _deps\libwdi
+          git -C _deps\libwdi checkout --detach %LIBWDI_COMMIT%
+          for /f %%i in ('git -C _deps\libwdi rev-parse HEAD') do set ACTUAL_LIBWDI=%%i
+          echo libwdi commit: %ACTUAL_LIBWDI%
+          if /I not "%ACTUAL_LIBWDI%"=="%LIBWDI_COMMIT%" exit /b 1
+
+      - name: Download libwdi build support files
+        shell: cmd
+        working-directory: _deps/libwdi
+        run: |
+          curl -L %WDK_URL% -o wdk-redist.msi
+          curl -L %LIBUSB0_URL% -o libusb0-redist.zip
+          curl -L %LIBUSBK_URL% -o libusbk-redist.7z
+          msiexec /a wdk-redist.msi /qn TARGETDIR=%CD%\wdk
+          7z x libusb0-redist.zip
+          7z x libusbk-redist.7z
+          del libusb0-redist.zip
+          del libusbk-redist.7z
+          move libusb-win32* libusb0
+          move libusbK* libusbk
+
+      - name: Enable libwdi DLL in Release x64 solution build
+        shell: pwsh
+        working-directory: _deps/libwdi
+        run: |
+          $path = "libwdi.sln"
+          $dllGuid = "{79275348-41A4-4D07-8990-4068C9594A2C}"
+          $active = "`t$dllGuid.Release|x64.ActiveCfg = Release|x64"
+          $build = "`t$dllGuid.Release|x64.Build.0 = Release|x64"
+          $text = Get-Content $path -Raw
+          if (-not $text.Contains($active)) {
+            throw "Pinned libwdi solution no longer contains the expected DLL x64 ActiveCfg mapping."
+          }
+          if (-not $text.Contains($build)) {
+            $text = $text.Replace($active, "$active`r`n$build")
+            Set-Content -Path $path -Value $text -Encoding utf8 -NoNewline
+          }
+          if (-not (Select-String -Path $path -SimpleMatch $build -Quiet)) {
+            throw "Could not enable the libwdi DLL project in Release|x64."
+          }
+
+      - name: Build libwdi x64 DLL and mapped helpers
+        shell: cmd
+        working-directory: _deps/libwdi
+        run: |
+          rem The solution maps the DLL references to Win32 embedder/x86 installer,
+          rem x64 installer and ARM64 installer while building the x64 DLL itself.
+          msbuild libwdi.sln /m /p:Configuration=Release,Platform=x64,BuildMacros=%BUILD_MACROS%
+          if not exist x64\Release\dll\libwdi.dll exit /b 1
+          if not exist x64\Release\dll\libwdi.lib exit /b 1
+
+      - name: Configure setup tool
+        shell: pwsh
+        run: |
+          $libwdi = Join-Path $PWD "_deps/libwdi"
+          cmake -S . -B build -A x64 "-DLIBWDI_ROOT=$libwdi"
+
+      - name: Build setup tool
         run: cmake --build build --config Release
 
-      - name: Upload EXE
+      - name: Package notices and checksums
+        shell: pwsh
+        run: |
+          Copy-Item "build/Release/spike-rt-dfu-winusb-setup.exe" "build/Release/spike-rt-dfu-winusb-setup-v0.2.exe"
+          Remove-Item "build/Release/spike-rt-dfu-winusb-setup.exe"
+          Copy-Item "_deps/libwdi/COPYING-LGPL" "build/Release/libwdi-COPYING-LGPL.txt"
+          Copy-Item "THIRD_PARTY_NOTICES.md" "build/Release/THIRD_PARTY_NOTICES.md"
+          $files = @(
+            "build/Release/spike-rt-dfu-winusb-setup-v0.2.exe",
+            "build/Release/libwdi.dll"
+          )
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+            "$hash  $([System.IO.Path]::GetFileName($file))"
+          }
+          $lines | Set-Content -Encoding ascii "build/Release/SHA256SUMS.txt"
+          Get-Content "build/Release/SHA256SUMS.txt"
+
+      - name: Upload Windows x64 package
         uses: actions/upload-artifact@v4
         with:
-          name: spike-rt-dfu-winusb-setup-windows-x64
-          path: build/Release/spike-rt-dfu-winusb-setup.exe
+          name: spike-rt-dfu-winusb-setup-v0.2-windows-x64
+          path: |
+            build/Release/spike-rt-dfu-winusb-setup-v0.2.exe
+            build/Release/libwdi.dll
+            build/Release/libwdi-COPYING-LGPL.txt
+            build/Release/THIRD_PARTY_NOTICES.md
+            build/Release/SHA256SUMS.txt
           if-no-files-found: error
