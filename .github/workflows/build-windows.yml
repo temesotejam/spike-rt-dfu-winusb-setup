@@ -54,21 +54,33 @@ jobs:
           move libusb-win32* libusb0
           move libusbK* libusbk
 
-      - name: Build libwdi mapped helpers
-        shell: cmd
+      - name: Enable libwdi DLL in Release x64 solution build
+        shell: pwsh
         working-directory: _deps/libwdi
         run: |
-          rem The upstream solution maps x64 builds to the required Win32/x64/ARM64 helper projects.
-          rem The DLL project itself is not selected in Release|x64, so build it explicitly next.
-          msbuild libwdi.sln /m /p:Configuration=Release,Platform=x64,BuildMacros=%BUILD_MACROS%
+          $path = "libwdi.sln"
+          $dllGuid = "{79275348-41A4-4D07-8990-4068C9594A2C}"
+          $active = "`t$dllGuid.Release|x64.ActiveCfg = Release|x64"
+          $build = "`t$dllGuid.Release|x64.Build.0 = Release|x64"
+          $text = Get-Content $path -Raw
+          if (-not $text.Contains($active)) {
+            throw "Pinned libwdi solution no longer contains the expected DLL x64 ActiveCfg mapping."
+          }
+          if (-not $text.Contains($build)) {
+            $text = $text.Replace($active, "$active`r`n$build")
+            Set-Content -Path $path -Value $text -Encoding utf8 -NoNewline
+          }
+          if (-not (Select-String -Path $path -SimpleMatch $build -Quiet)) {
+            throw "Could not enable the libwdi DLL project in Release|x64."
+          }
 
-      - name: Build libwdi x64 DLL
+      - name: Build libwdi x64 DLL and mapped helpers
         shell: cmd
         working-directory: _deps/libwdi
         run: |
-          rem Helper binaries and embedded.h were prepared by the solution build above.
-          rem Disable project-reference rebuilding so MSBuild does not reinterpret helper platforms.
-          msbuild libwdi\.msvc\libwdi_dll.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:BuildProjectReferences=false /p:BuildMacros=%BUILD_MACROS%
+          rem The solution maps the DLL references to Win32 embedder/x86 installer,
+          rem x64 installer and ARM64 installer while building the x64 DLL itself.
+          msbuild libwdi.sln /m /p:Configuration=Release,Platform=x64,BuildMacros=%BUILD_MACROS%
           if not exist x64\Release\dll\libwdi.dll exit /b 1
           if not exist x64\Release\dll\libwdi.lib exit /b 1
 
