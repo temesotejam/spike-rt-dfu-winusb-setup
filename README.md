@@ -35,6 +35,8 @@ WindowsでLEGO SPIKE Prime HubのDFUモードをSPIKE-RT WebUSB書き込みに�
 
 Windows上で対象DFU Hubを安全に検出し、現在のデバイス情報とドライバ情報を表示します。ドライバ変更は行いません。
 
+EXEをダブルクリックしても結果を読めるよう、終了前に `Press Enter to close this window...` と表示してEnter入力を待ちます。コマンドラインや自動実行で待機させたくない場合は `--no-pause` を付けて実行できます。
+
 ### v0.2 - WinUSB Setup
 
 v0.1の検出条件を満たした対象だけにWinUSBをセットアップします。
