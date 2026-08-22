@@ -11,8 +11,11 @@ A write operation may only be considered when all of the following are true:
 - USB VID is `0x0694`
 - USB PID is `0x0008`
 - exactly one matching device is connected
-- device metadata is consistent with the expected LEGO SPIKE/Technic Large Hub DFU device
+- device name/description identifies `LEGO Technic Large Hub in DFU Mode`
+- if Windows exposes a manufacturer value, it identifies LEGO
+- libwdi independently sees exactly one matching `0694:0008` USB device
 - the requested driver is WinUSB
+- the user explicitly types `INSTALL` immediately before the change
 
 ## Mandatory refusal cases
 
@@ -21,9 +24,33 @@ The program must make no driver changes when:
 - no matching DFU device is present
 - more than one `0694:0008` device is present
 - the device identity is ambiguous
-- expected metadata cannot be verified in an installation-capable build
+- the device description does not identify the expected Large Hub DFU device
+- a non-empty manufacturer value does not identify LEGO
+- libwdi enumeration disagrees with the SetupAPI target count
 - a device other than the target VID/PID is selected or discovered
+- the requested driver would be anything other than WinUSB
+- the user does not provide the explicit confirmation
 - the operation would affect a runtime serial/COM device
+
+## Idempotent behavior
+
+If the verified target already reports `Service=WinUSB`, the program exits successfully without preparing or installing a driver package.
+
+This means repeated execution on an already-configured PC must not replace or reinstall the driver unnecessarily.
+
+## Installation path
+
+For a verified target that is not already using WinUSB:
+
+1. show the exact target identity and current service
+2. require the user to type `INSTALL`
+3. use pinned libwdi v1.5.1 with `WDI_WINUSB` only
+4. allow Windows/libwdi to request UAC or driver confirmation when required
+5. never expose libwdi's generic device chooser to the user
+6. re-enumerate the device after installation
+7. report success only after SetupAPI reports `Service=WinUSB`
+
+If libwdi reports success but the final SetupAPI verification fails, the program reports an incomplete/failed setup and instructs the user to reconnect the DFU Hub and rerun the tool.
 
 ## Separation from SPIKE-RT runtime serial
 
@@ -34,8 +61,14 @@ DFU driver setup and runtime debugging are separate concerns.
 
 This installer must never replace the runtime serial driver with WinUSB.
 
-## Development stages
+## Dependency boundary
 
-`v0.1` is read-only. It enumerates the target and reports current device/driver information.
+The installation implementation uses upstream `pbatard/libwdi` v1.5.1 pinned to commit `9b23b82a2dd1cbffc16d46c212f92c6bf8c0c602`.
 
-An installation-capable version must preserve the same fail-closed detection path and add an explicit confirmation immediately before changing the driver.
+libwdi is built as a separate DLL. The application performs its own device validation before invoking libwdi and does not expose arbitrary VID/PID or driver-type selection.
+
+## Modes
+
+- normal execution: detect, validate, and if needed offer the guarded WinUSB installation
+- `--detect-only`: perform validation/reporting only; never install
+- `--no-pause`: do not wait for Enter before process exit; this changes only console behavior, not installation confirmation
