@@ -59,6 +59,7 @@ spike-rt-dfu-winusb-setup-v0.2.exe --self-test
 - driverless時の空メーカー値を許容する
 - WinUSB状態判定
 - 同梱libwdiがWinUSB機能を持つこと
+- libwdiが生成する形式と同じUTF-16LE+BOMのINFを正しく読み、`0694:0008` とWinUSBを検出できること
 
 このモードはUSB列挙、INF生成、証明書変更、ドライバ変更を行いません。GitHub Actionsでも毎回実行します。
 
@@ -71,6 +72,8 @@ spike-rt-dfu-winusb-setup-v0.2.exe --prepare-only
 ```
 
 SetupAPIとlibwdiの両方で対象を再確認したうえで、一時フォルダにWinUSB用INFを生成し、INFに `VID_0694&PID_0008` とWinUSB参照が含まれることを確認します。その後、一時ファイルを削除します。
+
+libwdiの生成INFはUTF-16LE+BOMなので、検証側もUTF-16LEを明示的にデコードしてから内容を確認します。
 
 このモードではlibwdiの `disable_cat=TRUE` / `disable_signing=TRUE` を使用し、`wdi_install_driver()` は呼びません。したがって、ドライバ割り当て、カタログ署名、自己署名証明書の追加は行いません。現在すでに `Service=WinUSB` のPCでも実行できます。
 
@@ -120,7 +123,7 @@ libwdiはLGPL-3.0-or-laterです。詳細は `THIRD_PARTY_NOTICES.md` とArtifac
 - `Service=WinUSB` の判定
 - WinUSB設定済みPCで再実行しても何も変更せず終了すること
 
-GitHub Actionsでは、Windows x64ビルドと `--self-test --no-pause` を毎回実行します。
+GitHub Actionsでは、Windows x64ビルドと `--self-test --no-pause` を毎回実行します。self-testにはUTF-16LE+BOMのINFデコード検証も含めます。
 
 **未確認:** `Service!=WinUSB` の実PCに対して、実際に `INSTALL` → WinUSB割り当て → `Service=WinUSB` 再確認まで完了する経路。この検証は未設定PCを利用できるときに行います。
 
