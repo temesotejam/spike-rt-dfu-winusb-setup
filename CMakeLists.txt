@@ -16,9 +16,14 @@ set(LIBWDI_INCLUDE_DIR "${LIBWDI_ROOT}/libwdi")
 set(LIBWDI_DLL_DIR "${LIBWDI_ROOT}/x64/Release/dll")
 set(LIBWDI_IMPORT_LIB "${LIBWDI_DLL_DIR}/libwdi.lib")
 set(LIBWDI_DLL "${LIBWDI_DLL_DIR}/libwdi.dll")
+set(APP_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/spike_rt_winusb_setup.ico")
 
 if(NOT EXISTS "${LIBWDI_IMPORT_LIB}" OR NOT EXISTS "${LIBWDI_DLL}")
     message(FATAL_ERROR "Built libwdi x64 Release DLL/import library not found under ${LIBWDI_DLL_DIR}")
+endif()
+
+if(NOT EXISTS "${APP_ICON_PATH}")
+    message(FATAL_ERROR "Application icon not found: ${APP_ICON_PATH}")
 endif()
 
 set(EMBEDDED_RUNTIME_DIR "${CMAKE_BINARY_DIR}/embedded-runtime")
@@ -121,7 +126,7 @@ configure_file(
 set_source_files_properties(
     "${CMAKE_CURRENT_BINARY_DIR}/embedded_payload.rc"
     PROPERTIES
-        OBJECT_DEPENDS "${EMBEDDED_GUI_EXE};${EMBEDDED_WORKER_EXE};${EMBEDDED_LIBWDI_DLL}"
+        OBJECT_DEPENDS "${EMBEDDED_GUI_EXE};${EMBEDDED_WORKER_EXE};${EMBEDDED_LIBWDI_DLL};${APP_ICON_PATH}"
 )
 
 add_executable(spike-rt-dfu-winusb-setup-bundle WIN32
