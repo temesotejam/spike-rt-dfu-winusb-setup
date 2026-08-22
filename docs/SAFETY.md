@@ -53,6 +53,7 @@ This mode does not enumerate USB devices. It runs synthetic policy checks for:
 - driverless metadata handling
 - WinUSB state recognition
 - presence of WinUSB support in the linked libwdi binary
+- decoding a synthetic UTF-16LE+BOM INF and finding the expected `0694:0008` and WinUSB markers
 
 It must not call `wdi_prepare_driver()` or `wdi_install_driver()`.
 
@@ -68,7 +69,9 @@ It calls `wdi_prepare_driver()` only with:
 - `use_wcid_driver = FALSE`
 - `external_inf = FALSE`
 
-The generated temporary INF must contain `VID_0694&PID_0008` and a WinUSB reference. The temporary directory is deleted after validation.
+libwdi writes the generated INF as UTF-16LE with a BOM. The validator must decode that encoding before checking the INF for `VID_0694&PID_0008` and WinUSB references.
+
+The temporary directory is deleted after validation.
 
 This mode must never call `wdi_install_driver()`. With signing disabled, it must not request self-signed certificate installation. It therefore validates the libwdi extraction/tokenization path without intentionally changing device binding, the driver store, or certificate trust.
 
