@@ -2,7 +2,7 @@
 
 WindowsでLEGO SPIKE Prime HubのDFUモードをSPIKE-RT WebUSB書き込みに使えるようにするための、専用WinUSBセットアップツールです。
 
-このツールは汎用USBドライバ変更ツールにはしません。対象をSPIKE Prime HubのDFUモードに限定し、未知のUSB機器やSPIKE-RT実行時のUSBシリアルには触れない設計にします。
+汎用USBドライバ変更ツールにはせず、対象をSPIKE Prime / Technic Large HubのDFUモードに限定します。SPIKE-RT実行時のUSBシリアル / COMポートや、他のUSB機器には触れません。
 
 ## 対象
 
@@ -11,137 +11,134 @@ WindowsでLEGO SPIKE Prime HubのDFUモードをSPIKE-RT WebUSB書き込みに�
 - USB PID: `0x0008`
 - 目的: DFUインターフェースをWindowsのWinUSBで利用できる状態にする
 
-## 対象外
+## 通常の使い方 - v0.3 GUI
 
-- SPIKE-RT実行中のUSBシリアル / COMポート
-- 通常起動中のLEGO Hub
-- `0694:0008`以外のUSB機器
-- 複数候補が同時に存在して対象を一意に決められない状態
+配布ZIPをフォルダへ展開し、フォルダ構成を変更せずに次のEXEをダブルクリックします。
 
-## v0.2 の動作
+```text
+SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe
+```
 
-通常はEXEをダブルクリックして使います。
+GUIは起動すると自動的にDFU Hubを確認します。
 
 ```text
 HubをDFUモードでUSB接続
-→ spike-rt-dfu-winusb-setup-v0.2.exe を起動
-→ 0694:0008 を1台だけ検出
-→ LEGO Technic Large Hub in DFU Mode であることを確認
-→ Service=WinUSB なら「設定済み」と表示して終了
-→ 未設定なら現在のドライバ情報を表示
-→ ユーザーが INSTALL と入力
-→ libwdiでWinUSBを準備・インストール
-→ WindowsのUAC/ドライバ確認が必要なら表示
-→ 再検出して Service=WinUSB を確認
-→ 完了
+        ↓
+GUI EXEをダブルクリック
+        ↓
+0694:0008 を1台だけ確認
+        ↓
+LEGO Technic Large Hub in DFU Mode であることを確認
+        ↓
+┌─ Service=WinUSB ─→ 「準備完了」
+│
+└─ 未設定 ─────────→ 「WinUSBを設定」ボタン
+                         ↓
+                    確認ダイアログ
+                         ↓
+                    WinUSBセットアップ
+                         ↓
+                    Service=WinUSB を再確認
 ```
 
-結果を読めるよう、終了前に `Press Enter to close this window...` と表示してEnter入力を待ちます。コマンドラインや自動実行で待機させたくない場合は `--no-pause` を付けます。
+GUIに汎用USBデバイス選択画面はありません。操作は基本的に `再確認`、必要な場合だけ `WinUSBを設定`、`閉じる` の3つです。
 
-## 非破壊テスト
+## v0.3 の内部構成
 
-WinUSB未設定PCが手元になくても、インストール処理以外の経路を検証できるように2つの非破壊モードを用意します。
-
-### `--self-test`
-
-Hubを接続せずに実行できます。
+ユーザーが起動するのはルートのGUI EXEだけです。実際のUSB検出・安全判定・WinUSB処理は、これまで実機確認してきたCLIを `runtime` 配下のworkerとしてそのまま利用します。
 
 ```text
-spike-rt-dfu-winusb-setup-v0.2.exe --self-test
+SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe
+runtime/
+  spike-rt-dfu-winusb-worker.exe
+  libwdi.dll
+libwdi-COPYING-LGPL.txt
+THIRD_PARTY_NOTICES.md
+README.md
+SHA256SUMS.txt
 ```
 
-次を確認します。
-
-- 正しい `0694:0008` + Large Hub DFUメタデータを受理できる
-- 誤PIDを拒否できる
-- 誤デバイス名を拒否できる
-- Windowsがメーカー名を返した場合に誤メーカーを拒否できる
-- driverless時の空メーカー値を許容する
-- WinUSB状態判定
-- 同梱libwdiがWinUSB機能を持つこと
-- libwdiが生成する形式と同じUTF-16LE+BOMのINFを正しく読み、`0694:0008` とWinUSBを検出できること
-
-このモードはUSB列挙、INF生成、証明書変更、ドライバ変更を行いません。GitHub Actionsでも毎回実行します。
-
-### `--prepare-only`
-
-DFU Hubを1台接続して実行します。
-
-```text
-spike-rt-dfu-winusb-setup-v0.2.exe --prepare-only
-```
-
-SetupAPIとlibwdiの両方で対象を再確認したうえで、一時フォルダにWinUSB用INFを生成し、INFに `VID_0694&PID_0008` とWinUSB参照が含まれることを確認します。その後、一時ファイルを削除します。
-
-libwdiの生成INFはUTF-16LE+BOMなので、検証側もUTF-16LEを明示的にデコードしてから内容を確認します。最初の実機prepare-only試験でINF生成そのものは成功したものの、旧検証コードが8-bitテキストとして読んでいたため誤判定したことが分かり、このUTF-16LE対応を追加しました。
-
-このモードではlibwdiの `disable_cat=TRUE` / `disable_signing=TRUE` を使用し、`wdi_install_driver()` は呼びません。したがって、ドライバ割り当て、カタログ署名、自己署名証明書の追加は行いません。現在すでに `Service=WinUSB` のPCでも実行できます。
-
-`--detect-only` は従来どおり、検出と現在のドライバ状態の表示だけを行います。
+GUI側でドライバ変更ロジックを複製しないため、CLIで確認してきたfail-closed判定がそのまま最終権限を持ちます。
 
 ## 安全方針
 
-ツールはfail-closedで動作させます。
+workerは次の条件を満たさない限りドライバ変更へ進みません。
 
-1. `VID=0694 / PID=0008`の接続中デバイスだけを列挙する
-2. 0台なら何も変更せず、DFUモードへの入り方を案内する
+1. `VID=0694 / PID=0008` の接続中デバイスだけを対象にする
+2. 0台なら何も変更せず停止する
 3. 2台以上なら何も変更せず停止する
-4. 1台でも、名称が `LEGO Technic Large Hub in DFU Mode` と一致しなければ停止する
-5. WindowsがManufacturerを返した場合はLEGOであることも確認する
-6. libwdi側でも独立に `0694:0008` が1件だけであることを再確認する
-7. WinUSB以外の変更先は実装しない
-8. 実際の変更直前に `INSTALL` の明示入力を要求する
+4. 名称が `LEGO Technic Large Hub in DFU Mode` と一致しなければ停止する
+5. WindowsがManufacturerを返した場合はLEGOであることを確認する
+6. libwdi側でも独立に `0694:0008` が1件だけであることを確認する
+7. WinUSB以外の変更先を実装しない
+8. GUIではインストール前に確認ダイアログを表示し、worker側でも既存の `INSTALL` 確認を通す
 9. インストール後はSetupAPIで `Service=WinUSB` を再確認する
 10. SPIKE-RT実行時のCOMポートには変更を加えない
 
 詳細は `docs/SAFETY.md` を参照してください。
 
-## ビルドと配布物
+## 開発者向け非破壊テスト
 
-GitHub ActionsはWindows x64用に次を生成します。
+通常利用ではコマンドライン操作は不要です。以下は検証用です。
 
-- `spike-rt-dfu-winusb-setup-v0.2.exe`
-- `libwdi.dll`
-- `libwdi-COPYING-LGPL.txt`
-- `THIRD_PARTY_NOTICES.md`
-- `SHA256SUMS.txt`
+### `--self-test`
 
-`spike-rt-dfu-winusb-setup-v0.2.exe` と `libwdi.dll` は同じフォルダに置いて実行してください。v0.3で配布方法をさらに簡略化する予定です。
+worker単体で、Hubを接続せず安全判定ロジックをテストできます。GitHub Actionsでも毎回実行します。
+
+確認項目には、正しいDFUメタデータの受理、誤PID・誤名称・誤メーカーの拒否、WinUSB状態判定、libwdiのWinUSB対応、UTF-16LE+BOMのINFデコードが含まれます。
+
+### `--prepare-only`
+
+DFU Hubを1台接続した状態で、ドライバを変更せずlibwdiのWinUSB INF生成経路まで検証します。
+
+- `disable_cat=TRUE`
+- `disable_signing=TRUE`
+- `wdi_install_driver()` は呼ばない
+- 生成INFの `VID_0694&PID_0008` とWinUSB参照を確認
+- 一時ファイルは検証後に削除
+
+libwdiはINFをUTF-16LE+BOMで生成するため、検証側もUTF-16LEとして明示的にデコードします。
 
 ## libwdi
 
 WinUSBのINF生成、カタログ署名、ドライバ導入には `pbatard/libwdi` v1.5.1を使用します。GitHub Actionsではrelease commit `9b23b82a2dd1cbffc16d46c212f92c6bf8c0c602` に固定してビルドします。
 
-libwdiはLGPL-3.0-or-laterです。詳細は `THIRD_PARTY_NOTICES.md` とArtifactに同梱する `libwdi-COPYING-LGPL.txt` を参照してください。
+libwdiはLGPL-3.0-or-laterです。Artifactには `libwdi-COPYING-LGPL.txt` と `THIRD_PARTY_NOTICES.md` を同梱します。
 
 ## 検証状況
 
-実機で以下を確認済みです。
+実機で確認済み:
 
 - `0694:0008` の検出
 - `LEGO Technic Large Hub in DFU Mode` / `Lego Group` の取得
 - `Service=WinUSB` の判定
-- WinUSB設定済みPCで再実行しても何も変更せず終了すること
-- `--prepare-only` でlibwdiのINF生成処理まで到達し、ドライバインストールを行わず安全側に停止できること
+- WinUSB設定済みPCでは何も変更せず終了すること
+- `--prepare-only` でlibwdiが生成した実INFを正しく検証できること
+- `--prepare-only` 実行後も既存ドライバを変更しない経路
 
-GitHub Actionsでは、Windows x64ビルドと `--self-test --no-pause` を毎回実行します。self-testにはUTF-16LE+BOMのINFデコード検証も含めます。
+GitHub Actionsで確認済み:
 
-**再確認待ち:** UTF-16LE修正版の `--prepare-only` が実機生成INFを正しく検証して完了すること。
+- Windows x64 workerビルド
+- libwdi v1.5.1ビルド
+- worker `--self-test`
+- v0.3 Win32 GUIビルド
+- GUI + `runtime` worker + `libwdi.dll` の配布パッケージ生成
 
-**未確認:** `Service!=WinUSB` の実PCに対して、実際に `INSTALL` → WinUSB割り当て → `Service=WinUSB` 再確認まで完了する経路。この検証は未設定PCを利用できるときに行います。
+まだ実機未確認:
+
+- v0.3 GUIが設定済みPCで自動的に「準備完了」を表示する経路
+- `Service!=WinUSB` の実PCで、実際にWinUSBを新規設定して `Service=WinUSB` まで再確認する経路
 
 ## 開発段階
 
 ### v0.1 - Detector
 
-実機で `0694:0008`、`LEGO Technic Large Hub in DFU Mode`、`Lego Group`、`Service=WinUSB` を取得できることを確認済みです。
+対象DFU Hubと現在のWindowsドライバ状態を安全に読み取る検出器。
 
 ### v0.2 - WinUSB Setup
 
-v0.1のfail-closed検出を維持したまま、未設定の場合だけlibwdiでWinUSBをセットアップします。設定済み経路は実機確認済みで、新規インストール経路のみ実機未検証です。非破壊のself-test / prepare-onlyを追加して検証範囲を広げています。
+fail-closed検出を維持したまま、未設定の場合だけlibwdiでWinUSBを設定するCLI。設定済み経路と非破壊prepare-onlyは実機確認済みです。
 
-### v0.3 - Distribution
+### v0.3 - GUI / Distribution
 
-GUI、より分かりやすいエラー表示、GitHub Releasesでの配布、コード署名、Web Toolkitからのダウンロード導線を整備します。
-
-将来的には `spike-rt-web-toolkit` の書き込みページから、このツールのリリース版をダウンロードできるようにする想定です。
+CLIを安全なworkerとして残し、通常利用をWindows GUIへ移行します。次にGUI実機確認、GitHub Releases配布、コード署名、`spike-rt-web-toolkit` からのダウンロード導線を整備します。
