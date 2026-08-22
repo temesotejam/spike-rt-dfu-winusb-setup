@@ -19,7 +19,6 @@ env:
 jobs:
   build:
     # libwdi v1.5.1 MSVC projects target Visual Studio 2022 (v143).
-    # Do not use windows-latest here because that image can move to a newer VS toolset.
     runs-on: windows-2022
 
     steps:
@@ -78,8 +77,6 @@ jobs:
         shell: cmd
         working-directory: _deps/libwdi
         run: |
-          rem The solution maps the DLL references to Win32 embedder/x86 installer,
-          rem x64 installer and ARM64 installer while building the x64 DLL itself.
           msbuild libwdi.sln /m /p:Configuration=Release,Platform=x64,BuildMacros=%BUILD_MACROS%
           if not exist x64\Release\dll\libwdi.dll exit /b 1
           if not exist x64\Release\dll\libwdi.lib exit /b 1
@@ -93,43 +90,40 @@ jobs:
       - name: Build setup tool
         run: cmake --build build --config Release
 
-      - name: Run non-destructive worker self-test
+      - name: Run direct worker self-test
         shell: cmd
-        run: build\Release\spike-rt-dfu-winusb-setup.exe --self-test --no-pause
+        run: build\embedded-runtime\spike-rt-dfu-winusb-worker.exe --self-test --no-pause
 
-      - name: Verify GUI binary
+      - name: Verify embedded payload inputs
         shell: cmd
         run: |
+          if not exist build\embedded-runtime\SPIKE-RT-DFU-WinUSB-Setup-inner.exe exit /b 1
+          if not exist build\embedded-runtime\spike-rt-dfu-winusb-worker.exe exit /b 1
+          if not exist build\embedded-runtime\libwdi.dll exit /b 1
           if not exist build\Release\SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe exit /b 1
 
-      - name: Package GUI and private runtime worker
+      - name: Run final single-file bundle self-test
+        shell: cmd
+        run: build\Release\SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe --bundle-self-test
+
+      - name: Package single executable and notices
         shell: pwsh
         run: |
           Remove-Item "dist" -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Path "dist/runtime" -Force | Out-Null
+          New-Item -ItemType Directory -Path "dist" -Force | Out-Null
 
           Copy-Item "build/Release/SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe" "dist/SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe"
-          Copy-Item "build/Release/spike-rt-dfu-winusb-setup.exe" "dist/runtime/spike-rt-dfu-winusb-worker.exe"
-          Copy-Item "build/Release/libwdi.dll" "dist/runtime/libwdi.dll"
           Copy-Item "_deps/libwdi/COPYING-LGPL" "dist/libwdi-COPYING-LGPL.txt"
           Copy-Item "THIRD_PARTY_NOTICES.md" "dist/THIRD_PARTY_NOTICES.md"
           Copy-Item "README.md" "dist/README.md"
 
-          $files = @(
-            "dist/SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe",
-            "dist/runtime/spike-rt-dfu-winusb-worker.exe",
-            "dist/runtime/libwdi.dll"
-          )
-          $lines = foreach ($file in $files) {
-            $hash = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
-            "$hash  $($file.Replace('dist/', '').Replace('dist\\', ''))"
-          }
-          $lines | Set-Content -Encoding ascii "dist/SHA256SUMS.txt"
+          $hash = (Get-FileHash -Algorithm SHA256 "dist/SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe").Hash.ToLowerInvariant()
+          "$hash  SPIKE-RT-DFU-WinUSB-Setup-v0.3.exe" | Set-Content -Encoding ascii "dist/SHA256SUMS.txt"
           Get-Content "dist/SHA256SUMS.txt"
 
-      - name: Upload Windows x64 GUI package
+      - name: Upload Windows x64 single-file package
         uses: actions/upload-artifact@v4
         with:
-          name: spike-rt-dfu-winusb-setup-v0.3-gui-windows-x64
+          name: spike-rt-dfu-winusb-setup-v0.3-single-exe-windows-x64
           path: dist/**
           if-no-files-found: error
